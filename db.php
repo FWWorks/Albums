@@ -35,6 +35,14 @@ class Album
     public $user;           // an instance of User, whose is the owner
 }
 
+class Photo
+{
+	public $id;
+	public $file_name;
+	public $album;			// an instance of Album
+	public $tags;			// an array of instance of Tag
+}
+
 class DB
 {
 	
@@ -375,6 +383,9 @@ class DB
         $stmt->execute();
     }
     
+    /*
+     * remove a tag from the album
+     */
     function removeTagFromAlbum($album_id, $tag_name)
     {
         $tag = $this->getTagByName($tag_name);
@@ -418,6 +429,166 @@ class DB
         foreach(array_diff($tag_names, $old_tag_names) as $to_add)
             $this->addTagToAlbum($album_id, $to_add);
     }
+    
+    /*
+     * get an instance of Album by id
+     * return an instance of Album, or null
+     */
+    function getAlbumById($album_id)
+    {
+        $sql = "SELECT * FROM t_album WHERE f_id = :id";
+		$stmt = $this->sqlite->prepare($sql);
+		$stmt->bindValue(":id", $album_id);
+        $result = $stmt->execute();
+        $row = $result->fetchArray(SQLITE3_ASSOC);
+        if($row == false)
+			return null;
+		$album = new Album();
+		$album->id = $row["f_id"];
+		$album->name = $row["f_name"];
+		$album->date = $row["f_date"];
+		$album->tags = $this->getTagsByAlbumId($album->id);
+		$album->user = $this->getUserById($row["f_user_id"]);
+        return $album;
+	}
+	
+    /*
+     * get all the tags attached to the given photo,
+     * <photo_id> is the id of the photo,
+     * return an array containing all the Tag instance, or an empty array.
+     */
+    function getTagsByPhotoId($photo_id)
+    {
+        $sql = "SELECT * FROM t_tag, t_tagging WHERE t_tagging.f_photo_id = :photo_id and t_tag.f_id = t_tagging.f_tag_id";
+		$stmt = $this->sqlite->prepare($sql);
+		$stmt->bindValue(":photo_id", $photo_id);
+        $result = $stmt->execute();
+        $all = array();
+        while($row = $result->fetchArray(SQLITE3_ASSOC))
+        {
+            $tag = new Tag();
+            $tag->id = $row["f_id"];
+            $tag->name = $row["f_name"];
+            array_push($all, $tag);
+        }
+        return $all;
+    }
+
+	/*
+	 * get an array of instances of Photo
+	 * return an array, maybe an empty array, each element is an instance of Photo
+	 */
+	function getPhotosByAlbum($album)
+	{
+        $sql = "SELECT * FROM t_photo WHERE f_album_id = :album_id";
+		$stmt = $this->sqlite->prepare($sql);
+		$stmt->bindValue(":album_id", $album->id);
+        $result = $stmt->execute();
+        $all = array();
+        while($row = $result->fetchArray(SQLITE3_ASSOC))
+        {
+			$photo = new Photo();
+			$photo->id = $row["f_id"];
+			$photo->file_name = $row["f_file_name"];
+            $photo->album = $album;
+            $photo->tags = $this->getTagsByPhotoId($photo->id);
+            array_push($all, $photo);
+        }
+        return $all;
+	}
+	
+	/*
+	 * add a photo to DB,
+	 * <photo> is an instance of Photo, with field <file_name> and <album> filled.
+	 * return void, and <photo>->id will be filled.
+	 */
+	function addPhoto($photo)
+	{
+		$sql = "INSERT INTO t_photo (f_file_name, f_album_id) VALUES (:file_name, :album_id)";
+		$stmt = $this->sqlite->prepare($sql);
+		$stmt->bindValue(":file_name", $photo->file_name);
+		$stmt->bindValue(":album_id", $photo->album->id);
+		$stmt->execute();
+		$photo->id = $this->sqlite->lastInsertRowID();
+	}
+	
+    /*
+     * add a tag to a photo,
+     * <photo_id> is the id of the photo, <tag_name> is a string,
+     * return void
+     */
+    function addTagToPhoto($photo_id, $tag_name)
+    {
+        $tag = $this->getTagByName($tag_name);
+        if($tag)
+            $tag_id = $tag->id;
+        else
+        {
+            $sql = "INSERT INTO t_tag (f_name) VALUES (:name)";
+            $stmt = $this->sqlite->prepare($sql);
+            $stmt->bindValue(":name", $tag_name);
+            $stmt->execute();
+            $tag_id = $this->sqlite->lastInsertRowID();
+        }
+        $sql = "SELECT * FROM t_tagging WHERE f_tag_id = :tag_id and f_photo_id = :photo_id";
+        $stmt = $this->sqlite->prepare($sql);
+		$stmt->bindValue(":tag_id", $tag_id);
+        $stmt->bindValue(":photo_id", $photo_id);
+        $result = $stmt->execute();
+        $row = $result->fetchArray(SQLITE3_ASSOC);
+        if($row !== false)
+            return;
+        $sql = "INSERT INTO t_tagging (f_tag_id, f_photo_id) VALUES (:tag_id, :photo_id)";
+        $stmt = $this->sqlite->prepare($sql);
+		$stmt->bindValue(":tag_id", $tag_id);
+        $stmt->bindValue(":photo_id", $photo_id);
+        $stmt->execute();
+    }
+    
+    /*
+     * remove a tag from the photo
+     */
+    function removeTagFromPhoto($photo_id, $tag_name)
+    {
+        $tag = $this->getTagByName($tag_name);
+        if($tag == null)
+            return;
+        $sql = "DELETE FROM t_tagging WHERE f_tag_id = :tag_id and f_photo_id = :photo_id";
+        $stmt = $this->sqlite->prepare($sql);
+		$stmt->bindValue(":tag_id", $tag->id);
+        $stmt->bindValue(":photo_id", $photo_id);
+        $result = $stmt->execute();
+    }
+    
+    /*
+     * change the tags of a given photo,
+     * <photo_id> is the id of the photo, <tag_names> is an array of string of the new tags,
+     * return void
+     */
+    function changePhotoTags($photo_id, $tag_names)
+    {
+        $old_tag_names = array();
+        foreach($this->getTagsByPhotoId($photo_id) as $tag)
+            array_push($old_tag_names, $tag->name);
+        foreach(array_diff($old_tag_names, $tag_names) as $to_delete)
+            $this->removeTagFromPhoto($photo_id, $to_delete);
+        foreach(array_diff($tag_names, $old_tag_names) as $to_add)
+            $this->addTagToPhoto($photo_id, $to_add);
+    }
+    
+    /*
+     * remove a photo, <photo_id> is the id of the photo
+     * if succeed, return true, otherwise return false
+     */
+    function removePhoto($photo_id)
+    {
+		$sql = "DELETE FROM t_photo WHERE f_id = :id";
+        $stmt = $this->sqlite->prepare($sql);
+        $stmt->bindValue(":id", $photo_id);
+        $stmt->execute();
+        $changes = $this->sqlite->changes();
+		return $changes == 1;
+	}
 	
 }
 

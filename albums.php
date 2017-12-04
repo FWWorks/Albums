@@ -1,4 +1,5 @@
 <?php
+
 date_default_timezone_set("Asia/Shanghai");
 session_start();
 @$my_id = $_SESSION["user_id"];
