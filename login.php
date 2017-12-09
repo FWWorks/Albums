@@ -80,7 +80,7 @@ else
 								</p>
                                 <p class="change_link">
 									Not a member yet ?
-									<a href="#toregister" class="to_register">Join us</a>
+									<a href="register.php" class="to_register">Join us</a>
 								</p>
                             </form>
                         </div>
